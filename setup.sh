@@ -54,8 +54,8 @@ prompt_with_default() {
     echo "${input:-$default}"
 }
 
-# Set Database Name (default: exynos7870_v2)
-DB_NAME=${DB_NAME:-"exynos7870_v2"}
+# Set Database Name (default: kernel)
+DB_NAME=${DB_NAME:-"kernel"}
 DB_NAME=$(prompt_with_default "Enter database name" "$DB_NAME")
 
 # Set Database User (default: root)
