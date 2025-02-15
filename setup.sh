@@ -44,3 +44,40 @@ EOL
 
 echo "Configuration saved to branch.config:"
 cat branch.config
+
+
+# Function to prompt for input with default value
+prompt_with_default() {
+    local prompt="$1"
+    local default="$2"
+    read -p "${prompt} [${default}]: " input
+    echo "${input:-$default}"
+}
+
+# Set Database Name (default: exynos7870_v2)
+DB_NAME=${DB_NAME:-"exynos7870_v2"}
+DB_NAME=$(prompt_with_default "Enter database name" "$DB_NAME")
+
+# Set Database User (default: root)
+DB_USER=${DB_USER:-"root"}
+DB_USER=$(prompt_with_default "Enter database user" "$DB_USER")
+
+# Set Database Password securely
+if [ -z "$DB_PASS" ]; then
+    read -s -p "Enter database password: " DB_PASS
+    echo
+fi
+
+# Set Database Host (default: localhost)
+DB_HOST=${DB_HOST:-"localhost"}
+DB_HOST=$(prompt_with_default "Enter database host" "$DB_HOST")
+
+# Generate db.config file
+cat > db.config <<EOF
+DB_NAME="$DB_NAME"
+DB_USER="$DB_USER"
+DB_PASS="$DB_PASS"
+DB_HOST="$DB_HOST"
+EOF
+
+echo "Database configuration saved to db.config"
