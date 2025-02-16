@@ -96,4 +96,26 @@ echo "Name: $DB_NAME"
 echo "User: $DB_USER"
 echo "Pass: ***"  # Never display actual passwords
 echo "Host: $DB_HOST"
+echo
 #---------------------------------------------------Basic Setup End---------------------------------------------------#
+
+#---------------------------------------------------SQL Setup Start---------------------------------------------------#
+# Create the database if it doesn't exist
+echo "Creating database $DB_NAME if it doesn't exist..."
+mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
+
+# Switch to the database
+echo "Using database $DB_NAME..."
+mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -e "USE $DB_NAME;"
+
+# Import SQL files in order
+for i in {1..6}; do
+    SQL_FILE=$(ls sql/"$i"*.sql 2>/dev/null)  # Find the SQL file starting with $i
+    if [ -z "$SQL_FILE" ]; then
+        echo "Error: SQL file for step $i not found!" >&2
+        exit 1
+    fi
+    echo "Importing $SQL_FILE..."
+    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$SQL_FILE"
+done
+#---------------------------------------------------SQL Setup End------------------------------------------------------#
