@@ -3,8 +3,8 @@
 ## Purpose
 This setup script:
 1. Checks for required dependencies (git, MariaDB, phpMyAdmin)
-2. Guides through branch configuration (base/feature branches)
-3. Sets up database configuration
+2. Guides through branch configuration (base/feature branches) branch.config
+3. Sets up database configuration db.config
 
 ## Installation
 
