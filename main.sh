@@ -160,7 +160,7 @@ if ! git show-ref --quiet refs/remotes/origin/"$BASE_BRANCH"; then
 fi
 
 echo "Switching to base branch '$BASE_BRANCH'..."
-git checkout "$BASE_BRANCH" || { echo "Error: Failed to switch to base branch '$BASE_BRANCH'." >&2; exit 1; }
+git switch "$BASE_BRANCH" || { echo "Error: Failed to switch to base branch '$BASE_BRANCH'." >&2; exit 1; }
 echo "Successfully switched to base branch '$BASE_BRANCH'."
 
 # Verify that the feature branch is fetchable and can be switched to
@@ -169,7 +169,7 @@ if ! git show-ref --quiet refs/remotes/origin/"$FEATURE_BRANCH"; then
     read -p "Would you like to create it from '$BASE_BRANCH'? (yes/no): " CREATE_FEATURE_CHOICE
 
     if [ "$CREATE_FEATURE_CHOICE" = "yes" ]; then
-        git checkout -b "$FEATURE_BRANCH" || { echo "Error: Failed to create feature branch '$FEATURE_BRANCH'." >&2; exit 1; }
+        git switch -b "$FEATURE_BRANCH" || { echo "Error: Failed to create feature branch '$FEATURE_BRANCH'." >&2; exit 1; }
         echo "Feature branch '$FEATURE_BRANCH' created successfully."
     else
         echo "Feature branch setup aborted." >&2
@@ -177,10 +177,10 @@ if ! git show-ref --quiet refs/remotes/origin/"$FEATURE_BRANCH"; then
     fi
 else
     echo "Switching to feature branch '$FEATURE_BRANCH'..."
-    git checkout "$FEATURE_BRANCH" || { echo "Error: Failed to switch to feature branch '$FEATURE_BRANCH'." >&2; exit 1; }
+    git switch "$FEATURE_BRANCH" || { echo "Error: Failed to switch to feature branch '$FEATURE_BRANCH'." >&2; exit 1; }
     echo "Successfully switched to feature branch '$FEATURE_BRANCH'."
 fi
 
-git checkout "$BASE_BRANCH" || { echo "Error: Failed to switch to base branch '$BASE_BRANCH'." >&2; exit 1; }
+git switch "$BASE_BRANCH" || { echo "Error: Failed to switch to base branch '$BASE_BRANCH'." >&2; exit 1; }
 cd "$ORIGINAL_DIR" || { echo "Error: Failed to navigate to previous directory." >&2; exit 1; }
 #---------------------------------------------------Repo Setup End------------------------------------------------------#
