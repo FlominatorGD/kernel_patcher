@@ -48,8 +48,8 @@ done
 
 # Create configuration file
 cat > branch.config <<EOL
-BASE_BRANCH=$base_branch
-FEATURE_BRANCH=$feature_branch
+BASE_BRANCH="$base_branch"
+FEATURE_BRANCH="$feature_branch"
 EOL
 
 echo "Configuration saved to branch.config:"
