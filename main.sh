@@ -16,6 +16,7 @@ fi
 
 echo "Repo Configuration:"
 echo "Path: $REPO_PATH"
+echo
 
 # Load branch configuration
 if [ ! -f "branch.config" ]; then
