@@ -1,5 +1,15 @@
 #!/bin/bash
 
+# Check for git
+echo -n "Checking for git... "
+if dpkg -s git &> /dev/null; then
+    echo "Installed"
+else
+    echo "Not installed"
+    echo "Recommendation: Install git with: sudo apt install git"
+    echo "Note: You'll need to configure git during installation"
+fi
+
 # Check for MariaDB
 echo -n "Checking for MariaDB... "
 if dpkg -s mariadb-server &> /dev/null; then
