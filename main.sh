@@ -1,6 +1,22 @@
 #!/bin/bash
 
 #---------------------------------------------------Basic Setup Start---------------------------------------------------#
+# Load repo configuration
+if [ ! -f "repo.config" ]; then
+    echo "Error: repo.config file not found!" >&2
+    exit 1
+fi
+source ./repo.config
+
+# Validate repo configuration
+if [ -z "$REPO_PATH" ]; then
+    echo "Error: Missing repo configuration in repo.config!" >&2
+    exit 1
+fi
+
+echo "Repo Configuration:"
+echo "Path: $REPO_PATH"
+
 # Load branch configuration
 if [ ! -f "branch.config" ]; then
     echo "Error: branch.config file not found!" >&2

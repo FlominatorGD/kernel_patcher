@@ -29,6 +29,21 @@ else
     echo "  Note: You'll need to configure web server (Apache2/Nginx) and database during installation"
 fi
 
+# Set default path for kernel
+default_path="../kernel"
+
+# Check for command-line argument
+if [ -n "$1" ]; then
+  repo_path="$1"
+else
+  # Prompt user (with default shown)
+  read -p "Enter repository path of your kernel [default: $default_path]: " input
+  repo_path="${input:-$default_path}"
+fi
+
+# Write to repo.config (quotes handle spaces)
+echo "REPO_PATH=\"$repo_path\"" > repo.config
+
 echo "Creating branch configuration..."
 echo "Please enter the following branch details:"
 
@@ -91,18 +106,3 @@ DB_HOST="$DB_HOST"
 EOF
 
 echo "Database configuration saved to db.config"
-
-# Set default path for kernel
-default_path="../kernel"
-
-# Check for command-line argument
-if [ -n "$1" ]; then
-  repo_path="$1"
-else
-  # Prompt user (with default shown)
-  read -p "Enter repository path of your kernel [default: $default_path]: " input
-  repo_path="${input:-$default_path}"
-fi
-
-# Write to repo.config (quotes handle spaces)
-echo "REPO_PATH=\"$repo_path\"" > repo.config
