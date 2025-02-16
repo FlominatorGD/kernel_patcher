@@ -170,8 +170,7 @@ if ! git show-ref --quiet refs/remotes/origin/"$FEATURE_BRANCH"; then
 
     if [ "$CREATE_FEATURE_CHOICE" = "yes" ]; then
         git checkout -b "$FEATURE_BRANCH" || { echo "Error: Failed to create feature branch '$FEATURE_BRANCH'." >&2; exit 1; }
-        git push -u origin "$FEATURE_BRANCH" || { echo "Error: Failed to push feature branch '$FEATURE_BRANCH' to the remote." >&2; exit 1; }
-        echo "Feature branch '$FEATURE_BRANCH' created successfully from '$BASE_BRANCH' and pushed to the remote."
+        echo "Feature branch '$FEATURE_BRANCH' created successfully."
     else
         echo "Feature branch setup aborted." >&2
         exit 1
@@ -182,5 +181,6 @@ else
     echo "Successfully switched to feature branch '$FEATURE_BRANCH'."
 fi
 
+git checkout "$BASE_BRANCH" || { echo "Error: Failed to switch to base branch '$BASE_BRANCH'." >&2; exit 1; }
 cd "$ORIGINAL_DIR" || { echo "Error: Failed to navigate to previous directory." >&2; exit 1; }
 #---------------------------------------------------Repo Setup End------------------------------------------------------#
