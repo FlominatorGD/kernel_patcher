@@ -184,3 +184,9 @@ fi
 git switch "$BASE_BRANCH" || { echo "Error: Failed to switch to base branch '$BASE_BRANCH'." >&2; exit 1; }
 cd "$ORIGINAL_DIR" || { echo "Error: Failed to navigate to previous directory." >&2; exit 1; }
 #---------------------------------------------------Repo Setup End------------------------------------------------------#
+
+
+#---------------------------------------------------main----------------------------------------------------------------#
+echo "INSERT INTO branches (branch_name) VALUES ('$BASE_BRANCH');\
+      INSERT INTO branches (branch_name) VALUES ('$FEATURE_BRANCH');" | \
+mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME"
