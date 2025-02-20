@@ -190,3 +190,40 @@ cd "$ORIGINAL_DIR" || { echo "Error: Failed to navigate to previous directory." 
 echo "INSERT INTO branches (branch_name) VALUES ('$BASE_BRANCH');\
       INSERT INTO branches (branch_name) VALUES ('$FEATURE_BRANCH');" | \
 mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME"
+
+index_files() {
+    local BRANCH_NAME="$1"
+    local SQL_FILE="$ORIGINAL_DIR/files_inserts.sql"
+
+    cd "$REPO_PATH" || { echo "Error: Failed to navigate to repository directory." >&2; exit 1; }
+
+    git switch "$BRANCH_NAME" || { echo "Error: Failed to switch to base branch '$BRANCH_NAME'." >&2; exit 1; }
+
+    # Fetch the branch_id for the given branch
+    local BRANCH_ID=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" -N -e "SELECT branch_id FROM branches WHERE branch_name='$BRANCH_NAME';")
+
+    # Get a list of all files in the current branch
+    local all_files=$(git ls-files)
+
+    # Always create/empty the SQL file before writing to it
+    > "$SQL_FILE"
+
+    # Iterate over all files and create insert statements
+    while IFS= read -r filename; do
+        
+        # Write the insert statement to the SQL file
+        echo "INSERT INTO files (filename, branch_id) VALUES ('$filename', $BRANCH_ID);" >> "$SQL_FILE"
+    done <<< "$all_files"
+
+    # Import the SQL file into MySQL
+    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" < "$SQL_FILE"
+
+    echo "Data inserted or updated for branch '$BRANCH_NAME'."
+
+    cd "$ORIGINAL_DIR" || { echo "Error: Failed to navigate to previous directory." >&2; exit 1; }
+
+    rm files_inserts.sql
+}
+
+index_files "$BASE_BRANCH"
+index_files "$FEATURE_BRANCH"
