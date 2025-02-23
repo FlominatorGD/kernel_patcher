@@ -227,3 +227,58 @@ index_files() {
 
 index_files "$BASE_BRANCH"
 index_files "$FEATURE_BRANCH"
+
+# Fetch filenames for the base branch
+filenames_base=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" -e "
+    SELECT f.filename
+    FROM files f
+    JOIN branches b ON f.branch_id = b.branch_id
+    WHERE b.branch_name LIKE '$BASE_BRANCH'
+" -s -N)
+
+# Fetch filenames for the feature branch
+filenames_feature=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" -e "
+    SELECT f.filename
+    FROM files f
+    JOIN branches b ON f.branch_id = b.branch_id
+    WHERE b.branch_name LIKE '$FEATURE_BRANCH'
+" -s -N)
+
+# args for dirname can be too long
+base_dirs=$(echo "$filenames_base" | xargs -n 250 dirname | sort | uniq)
+feature_dirs=$(echo "$filenames_feature" | xargs -n 250 dirname | sort | uniq)
+
+# Find uncommon directories for the base branch (directories in base but not in feature)
+uncommon_base_dirs=$(comm -23 <(echo "$base_dirs" | sort) <(echo "$feature_dirs" | sort))
+
+# Find uncommon directories for the feature branch (directories in feature but not in base)
+uncommon_feature_dirs=$(comm -13 <(echo "$base_dirs" | sort) <(echo "$feature_dirs" | sort))
+
+filter_top_level_dirs() {
+    local dir parent skip
+    local -a result=()
+    local input="$1"
+
+    # Process the list from the variable (preserving newlines)
+    while IFS= read -r dir; do
+        skip=0
+        # Check if this directory is a subdirectory of any previously kept directory
+        for parent in "${result[@]}"; do
+            if [[ "${dir}" == "${parent}"/* ]]; then
+                skip=1
+                break
+            fi
+        done
+        # If not a subdirectory, add to results
+        (( skip )) || result+=("$dir")
+    done <<< "$input"
+
+    # Print the filtered results
+    printf '%s\n' "${result[@]}"
+}
+
+need_import_feature=$(filter_top_level_dirs "$uncommon_base_dirs")
+#echo "$need_import_feature"
+filter_top_level_dirs "$uncommon_feature_dirs"
+need_import_base=$(filter_top_level_dirs "$uncommon_fature_dirs")
+#echo "$need_import_feature"
