@@ -282,3 +282,88 @@ need_import_feature=$(filter_top_level_dirs "$uncommon_base_dirs")
 filter_top_level_dirs "$uncommon_feature_dirs"
 need_import_base=$(filter_top_level_dirs "$uncommon_fature_dirs")
 #echo "$need_import_feature"
+
+
+fetch_contibutors() {
+
+    cd "$REPO_PATH" || { echo "Error: Failed to navigate to repository directory." >&2; exit 1; }
+    local branches=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" \
+        -B -N -e "SELECT branch_name FROM branches;")
+
+    local SQL_FILE="$ORIGINAL_DIR/files_contibutors.sql"
+    touch "$SQL_FILE"
+    > "$SQL_FILE"
+
+    for branch_name in $branches; do
+        echo "Processing branch: $branch_name"
+
+        # Checkout the branch
+        git switch -f "$branch_name"
+        if [ $? -ne 0 ]; then
+            echo "Failed to checkout branch: $branch_name"
+            continue
+        fi
+        
+        git log --pretty=format:"INSERT IGNORE INTO contributors (contributor_name, contributor_email) VALUES (||%an||, ||%ae||);" >> "$SQL_FILE"
+        git log --pretty=format:"INSERT IGNORE INTO contributors (contributor_name, contributor_email) VALUES (||%cn||, ||%ce||);" >> "$SQL_FILE"
+    done
+
+    sed -i 's/\x27//g' "$SQL_FILE"
+    sed -i 's/\\//g' "$SQL_FILE"
+    sed -i 's/||/\x27/g' "$SQL_FILE"
+
+    # Import the SQL file into MySQL
+    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" < "$SQL_FILE"
+
+    echo "Contributors Data inserted."
+    cd "$ORIGINAL_DIR" || { echo "Error: Failed to navigate to previous directory." >&2; exit 1; }
+
+    rm "$SQL_FILE"
+}
+
+fetch_contibutors
+
+
+fetch_commits() {
+    local BRANCH_NAME="$1"
+    local SQL_FILE="$ORIGINAL_DIR/insert_commits.sql"
+
+    cd "$REPO_PATH" || { echo "Error: Failed to navigate to repository directory." >&2; exit 1; }
+
+    touch "$SQL_FILE"
+    > "$SQL_FILE"
+
+    # Get/Create branch ID
+    git switch -f "$BRANCH_NAME"
+    local BRANCH_ID=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" \
+        -B -N -e "SELECT branch_id FROM branches WHERE branch_name = '$BRANCH_NAME';")
+
+    # Generate SQL with safe delimiters
+    git log --pretty=format:"INSERT INTO commits (commit_hash, branch_id, author_name, author_email, author_time, committer_name, committer_email, committer_time, summary) VALUES (|||%H|||, $BRANCH_ID, |||%an|||, |||%ae|||, FROM_UNIXTIME(%at), |||%cn|||, |||%ce|||, FROM_UNIXTIME(%ct), |||%s|||);" > "$SQL_FILE"
+
+    # Convert delimiters to MySQL hex format
+    #perl -i -pe 's/\|\|(.*?)\|\|/sprintf("0x%s", unpack("H*", $1))/ge' "$SQL_FILE"
+    perl -i -pe 's/\|\|\|(.*?)\|\|\|/sprintf("0x%s", unpack("H*", $1))/ge' "$SQL_FILE"
+
+    # fix any breakage
+    perl -i -pe 's/\|//g' "$SQL_FILE"
+    perl -i -pe 's/\||//g' "$SQL_FILE"
+    perl -i -pe 's/\|||//g' "$SQL_FILE"
+
+    perl -pi -e 's/0x,/NULL,/g' "$SQL_FILE"
+    # 0x)
+    perl -pi -e 's/0x\)/NULL\)/g' "$SQL_FILE"
+
+    # Import to MySQL
+    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" < "$SQL_FILE"
+
+    echo "Commit data inserted for branch '$BRANCH_NAME'."
+
+    cd "$ORIGINAL_DIR" || { echo "Error: Failed to navigate to previous directory." >&2; exit 1; }
+
+    rm "$SQL_FILE"
+}
+
+fetch_commits "$BASE_BRANCH"
+fetch_commits "$FEATURE_BRANCH"
+

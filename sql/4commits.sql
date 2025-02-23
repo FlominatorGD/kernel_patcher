@@ -67,9 +67,9 @@ ALTER TABLE `commits`
 -- Constraints der Tabelle `commits`
 --
 ALTER TABLE `commits`
-  ADD CONSTRAINT `fk_author` FOREIGN KEY (`author_name`,`author_email`) REFERENCES `contributors` (`contributor_name`, `contributor_email`) ON DELETE CASCADE,
+--  ADD CONSTRAINT `fk_author` FOREIGN KEY (`author_name`,`author_email`) REFERENCES `contributors` (`contributor_name`, `contributor_email`) ON DELETE CASCADE,
   ADD CONSTRAINT `fk_branch` FOREIGN KEY (`branch_id`) REFERENCES `branches` (`branch_id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `fk_committer` FOREIGN KEY (`committer_name`,`committer_email`) REFERENCES `contributors` (`contributor_name`, `contributor_email`) ON DELETE CASCADE;
+--  ADD CONSTRAINT `fk_committer` FOREIGN KEY (`committer_name`,`committer_email`) REFERENCES `contributors` (`contributor_name`, `contributor_email`) ON DELETE CASCADE;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
