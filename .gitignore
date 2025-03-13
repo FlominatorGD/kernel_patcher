@@ -2,3 +2,9 @@ branch.config
 db.config
 repo.config
 testing.sh
+*.log
+lists
+out_base
+out_feature
+out_feature_b
+out_feature_c
