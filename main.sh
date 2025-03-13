@@ -103,13 +103,19 @@ echo
 #---------------------------------------------------Basic Setup End---------------------------------------------------#
 
 #---------------------------------------------------SQL Setup Start---------------------------------------------------#
+
+# Function to execute MySQL commands with common options
+run_mysql() {
+    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$@"
+}
+
 # Create the database if it doesn't exist
 echo "Creating database $DB_NAME if it doesn't exist..."
-mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
+run_mysql -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
 
 # Switch to the database
 echo "Using database $DB_NAME..."
-mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -e "USE $DB_NAME;"
+run_mysql -e "USE $DB_NAME;"
 
 # Import SQL files in order
 for i in {1..6}; do
@@ -119,7 +125,7 @@ for i in {1..6}; do
         exit 1
     fi
     echo "Importing $SQL_FILE..."
-    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$SQL_FILE"
+    run_mysql "$DB_NAME" < "$SQL_FILE"
 done
 #---------------------------------------------------SQL Setup End-------------------------------------------------------#
 
