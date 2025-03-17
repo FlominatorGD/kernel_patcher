@@ -117,16 +117,18 @@ run_mysql -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
 echo "Using database $DB_NAME..."
 run_mysql -e "USE $DB_NAME;"
 
-# Import SQL files in order
-for i in {1..6}; do
-    SQL_FILE=$(ls sql/"$i"*.sql 2>/dev/null)  # Find the SQL file starting with $i
-    if [ -z "$SQL_FILE" ]; then
-        echo "Error: SQL file for step $i not found!" >&2
-        exit 1
-    fi
-    echo "Importing $SQL_FILE..."
-    run_mysql "$DB_NAME" < "$SQL_FILE"
-done
+# Import SQL file
+
+SQL_FILE="sql/kernel.sql"
+
+if [ ! -f "$SQL_FILE" ]; then
+    echo "Error: SQL file $SQL_FILE not found!" >&2
+    exit 1
+fi
+
+echo "Importing $SQL_FILE..."
+run_mysql "$DB_NAME" < "$SQL_FILE"
+
 #---------------------------------------------------SQL Setup End-------------------------------------------------------#
 
 #---------------------------------------------------Repo Setup Start----------------------------------------------------#
