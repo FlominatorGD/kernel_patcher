@@ -199,179 +199,293 @@ echo "INSERT INTO branches (branch_name) VALUES ('$BASE_BRANCH');\
       INSERT INTO branches (branch_name) VALUES ('$FEATURE_BRANCH');" | \
 mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME"
 
-index_files() {
-    local BRANCH_NAME="$1"
-    local SQL_FILE="$ORIGINAL_DIR/files_inserts.sql"
+fetch_porcelain() {
+    local BRANCH_NAME_A="$1"
+    local file="$2"
+    local count_file_nr="$3"
+    local db_host="$4"
+    local db_user="$5"
+    local db_pass="$6"
+    local db_name="$7"
+    local original_dir="$8"
+    local COMBINED_SQL_FILE="$original_dir/$count_file_nr-combined.sql"
 
-    cd "$REPO_PATH" || { echo "Error: Failed to navigate to repository directory." >&2; exit 1; }
+    # Helper function with NULL handling
+    to_hex() {
+        local input="$1"
+        if [ -z "$input" ]; then
+            echo "NULL"
+        else
+            printf "0x%s" "$(printf "%s" "$input" | xxd -p -c 0 | tr -d '\n')"
+        fi
+    }
 
-    git switch "$BRANCH_NAME" || { echo "Error: Failed to switch to base branch '$BRANCH_NAME'." >&2; exit 1; }
+    # SQL escaping function
+    #escape_sql() {
+    #    echo "$1" | sed "s/'/''/g"
+    #}
 
-    # Fetch the branch_id for the given branch
-    local BRANCH_ID=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" -N -e "SELECT branch_id FROM branches WHERE branch_name='$BRANCH_NAME';")
+    echo "Processing $file (count: $count_file_nr)"
+    echo "$BRANCH_NAME_A"
 
-    # Get a list of all files in the current branch
-    local all_files=$(git ls-files)
+    # Get branch_id
+    local branch_id=$(mysql -h "$db_host" -u "$db_user" -p"$db_pass" -D "$db_name" \
+        -B -N -e "SELECT branch_id FROM branches WHERE branch_name = '$BRANCH_NAME_A';")
 
-    # Always create/empty the SQL file before writing to it
-    > "$SQL_FILE"
+    # Initialize SQL file with transaction
+    echo "START TRANSACTION;" > "$COMBINED_SQL_FILE"
 
-    # Iterate over all files and create insert statements
-    while IFS= read -r filename; do
-        
-        # Write the insert statement to the SQL file
-        echo "INSERT INTO files (filename, branch_id) VALUES ('$filename', $BRANCH_ID);" >> "$SQL_FILE"
-    done <<< "$all_files"
+    git blame --line-porcelain "$file" | {
+        local current_sha="" current_author_name="" current_author_email="" current_author_time=""
+        local current_committer_name="" current_committer_email="" current_committer_time=""
+        local current_summary="" current_filename="" current_code=""
+        local line_nr=0
 
-    # Import the SQL file into MySQL
-    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" < "$SQL_FILE"
+        while IFS= read -r line; do
+            if [[ $line =~ ^([0-9a-f]{40}) ]]; then
+                current_sha="${BASH_REMATCH[1]}"
+            elif [[ $line == "author "* ]]; then
+                current_author_name="${line#author }"
+            elif [[ $line == "author-mail "* ]]; then
+                current_author_email="${line#author-mail <}"
+                current_author_email="${current_author_email%>}"
+            elif [[ $line == "author-time "* ]]; then
+                current_author_time="${line#author-time }"
+            elif [[ $line == "committer "* ]]; then
+                current_committer_name="${line#committer }"
+            elif [[ $line == "committer-mail "* ]]; then
+                current_committer_email="${line#committer-mail <}"
+                current_committer_email="${current_committer_email%>}"
+            elif [[ $line == "committer-time "* ]]; then
+                current_committer_time="${line#committer-time }"
+            elif [[ $line == "summary "* ]]; then
+                current_summary="${line#summary }"
+            elif [[ $line == "filename "* ]]; then
+                current_filename="${line#filename }"
+            elif [[ $line == $'\t'* ]]; then
+                current_code="${line#   }"
+                ((line_nr++))
+                
+                # Escape filename and handle NULL values
+                local escaped_filename=$($current_filename)
+                local author_name_hex=$(to_hex "$current_author_name")
+                local author_email_hex=$(to_hex "$current_author_email")
+                local committer_name_hex=$(to_hex "$current_committer_name")
+                local committer_email_hex=$(to_hex "$current_committer_email")
+                local summary_hex=$(to_hex "$current_summary")
+                local code_hex=$(to_hex "$current_code")
 
-    echo "Data inserted or updated for branch '$BRANCH_NAME'."
+                # Generate SQL directly to combined file
+                cat <<SQL >> "$COMBINED_SQL_FILE"
+                -- User inserts
+                INSERT INTO users (name, email) VALUES ($author_name_hex, $author_email_hex)
+                ON DUPLICATE KEY UPDATE name = name, email = email;
+                
+                INSERT INTO users (name, email) VALUES ($committer_name_hex, $committer_email_hex)
+                ON DUPLICATE KEY UPDATE name = name, email = email;
+                
+                -- File insert
+                INSERT INTO files (filename) VALUES ('$escaped_filename')
+                ON DUPLICATE KEY UPDATE filename = filename;
+                
+                -- Commit insert
+                INSERT INTO commits (commit_hash, author_id, committer_id, author_time, committer_time, summary)
+                VALUES (
+                    '$current_sha',
+                    (SELECT user_id FROM users WHERE name = $author_name_hex AND email = $author_email_hex),
+                    (SELECT user_id FROM users WHERE name = $committer_name_hex AND email = $committer_email_hex),
+                    FROM_UNIXTIME($current_author_time),
+                    FROM_UNIXTIME($current_committer_time),
+                    $summary_hex
+                ) ON DUPLICATE KEY UPDATE commit_hash = commit_hash;
+                
+                -- Commit line
+                INSERT INTO commit_lines (commit_hash, file_id, line_nr, code)
+                VALUES (
+                    '$current_sha',
+                    (SELECT file_id FROM files WHERE filename = '$escaped_filename'),
+                    $line_nr,
+                    $code_hex
+                ) ON DUPLICATE KEY UPDATE commit_hash = commit_hash, file_id = file_id, line_nr = line_nr;
+                
+                -- Blame line
+                INSERT INTO blame_lines (branch_id, file_id, line_nr, commit_hash, commit_line_nr)
+                VALUES (
+                    $branch_id,
+                    (SELECT file_id FROM files WHERE filename = '$escaped_filename'),
+                    $line_nr,
+                    '$current_sha',
+                    $line_nr
+                ) ON DUPLICATE KEY UPDATE branch_id = branch_id, file_id = file_id, line_nr = line_nr;
+SQL
 
-    cd "$ORIGINAL_DIR" || { echo "Error: Failed to navigate to previous directory." >&2; exit 1; }
-
-    rm files_inserts.sql
-}
-
-index_files "$BASE_BRANCH"
-index_files "$FEATURE_BRANCH"
-
-# Fetch filenames for the base branch
-filenames_base=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" -e "
-    SELECT f.filename
-    FROM files f
-    JOIN branches b ON f.branch_id = b.branch_id
-    WHERE b.branch_name LIKE '$BASE_BRANCH'
-" -s -N)
-
-# Fetch filenames for the feature branch
-filenames_feature=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" -e "
-    SELECT f.filename
-    FROM files f
-    JOIN branches b ON f.branch_id = b.branch_id
-    WHERE b.branch_name LIKE '$FEATURE_BRANCH'
-" -s -N)
-
-# args for dirname can be too long
-base_dirs=$(echo "$filenames_base" | xargs -n 250 dirname | sort | uniq)
-feature_dirs=$(echo "$filenames_feature" | xargs -n 250 dirname | sort | uniq)
-
-# Find uncommon directories for the base branch (directories in base but not in feature)
-uncommon_base_dirs=$(comm -23 <(echo "$base_dirs" | sort) <(echo "$feature_dirs" | sort))
-
-# Find uncommon directories for the feature branch (directories in feature but not in base)
-uncommon_feature_dirs=$(comm -13 <(echo "$base_dirs" | sort) <(echo "$feature_dirs" | sort))
-
-filter_top_level_dirs() {
-    local dir parent skip
-    local -a result=()
-    local input="$1"
-
-    # Process the list from the variable (preserving newlines)
-    while IFS= read -r dir; do
-        skip=0
-        # Check if this directory is a subdirectory of any previously kept directory
-        for parent in "${result[@]}"; do
-            if [[ "${dir}" == "${parent}"/* ]]; then
-                skip=1
-                break
+                # Reset for next iteration
+                current_sha=""
+                current_author_name=""
+                current_author_email=""
+                current_author_time=""
+                current_committer_name=""
+                current_committer_email=""
+                current_committer_time=""
+                current_summary=""
+                current_filename=""
+                current_code=""
             fi
         done
-        # If not a subdirectory, add to results
-        (( skip )) || result+=("$dir")
-    done <<< "$input"
 
-    # Print the filtered results
-    printf '%s\n' "${result[@]}"
+        echo "COMMIT;" >> "$COMBINED_SQL_FILE"
+    }
+
+    # Execute combined SQL
+    # mysql -h "$db_host" -u "$db_user" -p"$db_pass" -D "$db_name" < "$COMBINED_SQL_FILE"
 }
 
-need_import_feature=$(filter_top_level_dirs "$uncommon_base_dirs")
-#echo "$need_import_feature"
-filter_top_level_dirs "$uncommon_feature_dirs"
-need_import_base=$(filter_top_level_dirs "$uncommon_fature_dirs")
-#echo "$need_import_feature"
+# Navigate to repository
+cd "$REPO_PATH" || { echo "Error: Failed to navigate to repository directory." >&2; exit 1; }
 
+# Fetch commit history and switch to branch
+git switch -f "$BASE_BRANCH" || { echo "Error: Failed to switch to branch '$BASE_BRANCH'." >&2; exit 1; }
+all_files=$(git ls-files)
 
-fetch_contibutors() {
+# Compare file differences between two branches and categorize them
+# Usage: compare_branch_files <base_branch> <feature_branch>
+# Sets five global variables:
+#   files_in_both - Modified files existing in both branches
+#   files_in_base_only - Files deleted in feature branch (exist only in base)
+#   files_in_feature_only - Added files only in feature branch
+#   files_in_both_and_base_only - Modified files + files only in base
+#   files_in_both_and_feature_only - Modified files + files only in feature
+compare_branch_files() {
+    local BASE_BRANCH=$1
+    local FEATURE_BRANCH=$2
+    
+    # Get all changed files between branches
+    local all_changed_files=$(git diff --name-only "$BASE_BRANCH" "$FEATURE_BRANCH")
 
-    cd "$REPO_PATH" || { echo "Error: Failed to navigate to repository directory." >&2; exit 1; }
-    local branches=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" \
-        -B -N -e "SELECT branch_name FROM branches;")
+    # Declare associative arrays to track file presence
+    local -A base_files feature_files
 
-    local SQL_FILE="$ORIGINAL_DIR/files_contibutors.sql"
-    touch "$SQL_FILE"
-    > "$SQL_FILE"
+    # Populate base branch files
+    while IFS= read -r file; do
+        base_files["$file"]=1
+    done < <(git ls-tree -r --name-only "$BASE_BRANCH")
 
-    for branch_name in $branches; do
-        echo "Processing branch: $branch_name"
+    # Populate feature branch files
+    while IFS= read -r file; do
+        feature_files["$file"]=1
+    done < <(git ls-tree -r --name-only "$FEATURE_BRANCH")
 
-        # Checkout the branch
-        git switch -f "$branch_name"
-        if [ $? -ne 0 ]; then
-            echo "Failed to checkout branch: $branch_name"
-            continue
+    # Initialize result arrays
+    local files_in_both=()
+    local files_in_base_only=()
+    local files_in_feature_only=()
+
+    # Categorize each changed file
+    while IFS= read -r file; do
+        local in_base=${base_files["$file"]:-0}
+        local in_feature=${feature_files["$file"]:-0}
+
+        if (( in_base && in_feature )); then
+            files_in_both+=("$file")     # Modified in feature branch
+        elif (( in_base )); then
+            files_in_base_only+=("$file") # Deleted in feature branch
+        else
+            files_in_feature_only+=("$file") # Added in feature branch
         fi
-        
-        git log --pretty=format:"INSERT IGNORE INTO contributors (contributor_name, contributor_email) VALUES (||%an||, ||%ae||);" >> "$SQL_FILE"
-        git log --pretty=format:"INSERT IGNORE INTO contributors (contributor_name, contributor_email) VALUES (||%cn||, ||%ce||);" >> "$SQL_FILE"
-    done
+    done <<< "$all_changed_files"
 
-    sed -i 's/\x27//g' "$SQL_FILE"
-    sed -i 's/\\//g' "$SQL_FILE"
-    sed -i 's/||/\x27/g' "$SQL_FILE"
+    # Convert arrays to newline-delimited strings and set global variables
+    declare -g files_in_both=$(printf "%s\n" "${files_in_both[@]}")
+    declare -g files_in_base_only=$(printf "%s\n" "${files_in_base_only[@]}")
+    declare -g files_in_feature_only=$(printf "%s\n" "${files_in_feature_only[@]}")
 
-    # Import the SQL file into MySQL
-    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" < "$SQL_FILE"
-
-    echo "Contributors Data inserted."
-    cd "$ORIGINAL_DIR" || { echo "Error: Failed to navigate to previous directory." >&2; exit 1; }
-
-    rm "$SQL_FILE"
+    # Create combined variables
+    declare -g files_in_both_and_base_only=$(printf "%s\n" "${files_in_both[@]}" "${files_in_base_only[@]}")
+    declare -g files_in_both_and_feature_only=$(printf "%s\n" "${files_in_both[@]}" "${files_in_feature_only[@]}")
 }
 
-fetch_contibutors
+
+# Example usage:
+compare_branch_files "$BASE_BRANCH" "$FEATURE_BRANCH"
+echo "Modified files: $files_in_both"
+echo "Base-only files: $files_in_base_only"
+echo "Feature-only files: $files_in_feature_only"
+echo "Modified + Base-only files: $files_in_both_and_base_only"
+echo "Modified + Feature-only files: $files_in_both_and_feature_only"
 
 
-fetch_commits() {
-    local BRANCH_NAME="$1"
-    local SQL_FILE="$ORIGINAL_DIR/insert_commits.sql"
+NUM_THREADS=128
+count_file_nr=0
 
-    cd "$REPO_PATH" || { echo "Error: Failed to navigate to repository directory." >&2; exit 1; }
+#mkdir -p  "$ORIGINAL_DIR/out_base"
+#echo "0" > "$ORIGINAL_DIR/out_base/counter.txt"
+#touch "$ORIGINAL_DIR/out_base/counter.lock"
 
-    touch "$SQL_FILE"
-    > "$SQL_FILE"
-
-    # Get/Create branch ID
-    git switch -f "$BRANCH_NAME"
-    local BRANCH_ID=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" \
-        -B -N -e "SELECT branch_id FROM branches WHERE branch_name = '$BRANCH_NAME';")
-
-    # Generate SQL with safe delimiters
-    git log --pretty=format:"INSERT INTO commits (commit_hash, branch_id, author_name, author_email, author_time, committer_name, committer_email, committer_time, summary) VALUES (|||%H|||, $BRANCH_ID, |||%an|||, |||%ae|||, FROM_UNIXTIME(%at), |||%cn|||, |||%ce|||, FROM_UNIXTIME(%ct), |||%s|||);" > "$SQL_FILE"
-
-    # Convert delimiters to MySQL hex format
-    #perl -i -pe 's/\|\|(.*?)\|\|/sprintf("0x%s", unpack("H*", $1))/ge' "$SQL_FILE"
-    perl -i -pe 's/\|\|\|(.*?)\|\|\|/sprintf("0x%s", unpack("H*", $1))/ge' "$SQL_FILE"
-
-    # fix any breakage
-    perl -i -pe 's/\|//g' "$SQL_FILE"
-    perl -i -pe 's/\||//g' "$SQL_FILE"
-    perl -i -pe 's/\|||//g' "$SQL_FILE"
-
-    perl -pi -e 's/0x,/NULL,/g' "$SQL_FILE"
-    # 0x)
-    perl -pi -e 's/0x\)/NULL\)/g' "$SQL_FILE"
-
-    # Import to MySQL
-    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" < "$SQL_FILE"
-
-    echo "Commit data inserted for branch '$BRANCH_NAME'."
-
-    cd "$ORIGINAL_DIR" || { echo "Error: Failed to navigate to previous directory." >&2; exit 1; }
-
-    rm "$SQL_FILE"
+increment_counter() {
+    local original_dir="$1"
+    (
+      flock 200  # Lock the file descriptor tied to counter.lock
+      read -r count < "$original_dir/counter.txt"
+      ((count++))
+      echo "$count" > "$original_dir/counter.txt"
+      echo "$count"  # Return the new value
+    ) 200>"counter.lock"  # Associate FD 200 with the lock file
 }
 
-fetch_commits "$BASE_BRANCH"
-fetch_commits "$FEATURE_BRANCH"
+export -f fetch_porcelain increment_counter fetch_unactive_commits
+export DB_HOST DB_USER DB_PASS DB_NAME ORIGINAL_DIR BASE_BRANCH FEATURE_BRANCH
 
+
+#Use xargs to run fetch_porcelain in parallel
+#printf "%s\n" "${files_in_both[@]}" | awk '!seen[$0]++' | xargs -n 1 -P $NUM_THREADS -I {} bash -c '
+#    filename={}
+#    count_file_nr=$(increment_counter "$ORIGINAL_DIR/out_base")
+#    echo "Processing $filename (count: $count_file_nr)"
+#    fetch_porcelain "$BASE_BRANCH" "$filename" "$count_file_nr" "$DB_HOST" "$DB_USER" "$DB_PASS" "$DB_NAME" "$ORIGINAL_DIR/out_base"
+#'
+
+
+#mkdir -p  "$ORIGINAL_DIR/out_feature_b"
+#echo "0" > "$ORIGINAL_DIR/out_feature_b/counter.txt"
+#touch "$ORIGINAL_DIR/out_feature_b/counter.lock"
+#
+#printf "%s\n" "${files_in_both[@]}" | awk '!seen[$0]++' | xargs -n 1 -P $NUM_THREADS -I {} bash -c '
+#     filename={}
+#     count_file_nr=$(increment_counter "$ORIGINAL_DIR/out_feature_b")
+#     echo "Processing $filename (count: $count_file_nr)"
+#     fetch_unactive_commits "$BASE_BRANCH" "$filename" "$count_file_nr" "$DB_HOST" "$DB_USER" "$DB_PASS" "$DB_NAME" "$ORIGINAL_DIR/out_feature_b"
+#'
+
+for file in $(ls "$ORIGINAL_DIR/out_feature_b"/*-combined.sql | sort -n); do mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$file"; done
+
+# Fetch commit history and switch to branch
+git switch -f "$FEATURE_BRANCH" || { echo "Error: Failed to switch to branch '$BASE_BRANCH'." >&2; exit 1; }
+
+#mkdir -p  "$ORIGINAL_DIR/out_feature"
+#echo "0" > "$ORIGINAL_DIR/out_feature/counter.txt"
+#touch "$ORIGINAL_DIR/out_feature/counter.lock"
+
+#printf "%s\n" "${files_in_both[@]}" | awk '!seen[$0]++' | xargs -n 1 -P $NUM_THREADS -I {} bash -c '
+#    filename={}
+#    count_file_nr=$(increment_counter "$ORIGINAL_DIR/out_feature")
+#    echo "Processing $filename (count: $count_file_nr)"
+#    fetch_porcelain "$FEATURE_BRANCH" "$filename" "$count_file_nr" "$DB_HOST" "$DB_USER" "$DB_PASS" "$DB_NAME" "$ORIGINAL_DIR/out_feature"
+#'
+#
+#for file in $(ls "$ORIGINAL_DIR/out_feature"/*-combined.sql | sort -n); do mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$file"; done
+
+#mkdir -p  "$ORIGINAL_DIR/out_feature_c"
+#echo "0" > "$ORIGINAL_DIR/out_feature_c/counter.txt"
+#touch "$ORIGINAL_DIR/out_feature_c/counter.lock"
+#
+#printf "%s\n" "${files_in_both[@]}" | awk '!seen[$0]++' | xargs -n 1 -P $NUM_THREADS -I {} bash -c '
+#     filename={}
+#     count_file_nr=$(increment_counter "$ORIGINAL_DIR/out_feature_c")
+#     echo "Processing $filename (count: $count_file_nr)"
+#     fetch_unactive_commits "$FEATURE_BRANCH" "$filename" "$count_file_nr" "$DB_HOST" "$DB_USER" "$DB_PASS" "$DB_NAME" "$ORIGINAL_DIR/out_feature_c"
+#'
+
+for file in $(ls "$ORIGINAL_DIR/out_feature_c"/*-combined.sql | sort -n); do mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$file"; done
+
+# Navigate to repository
+cd "$REPO_PATH" || { echo "Error: Failed to navigate to repository directory." >&2; exit 1; }
