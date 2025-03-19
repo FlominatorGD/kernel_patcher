@@ -100,6 +100,13 @@ echo "User: $DB_USER"
 echo "Pass: ***"  # Never display actual passwords
 echo "Host: $DB_HOST"
 echo
+
+# Check filter configuration
+if [ ! -f "filter.config" ]; then
+    echo "Notice: filter.config file not found! This is normal." >&2
+fi
+source ./filter.config
+
 #---------------------------------------------------Basic Setup End---------------------------------------------------#
 
 #---------------------------------------------------SQL Setup Start---------------------------------------------------#
@@ -195,8 +202,8 @@ cd "$ORIGINAL_DIR" || { echo "Error: Failed to navigate to previous directory." 
 
 
 #---------------------------------------------------main----------------------------------------------------------------#
-echo "INSERT INTO branches (branch_name) VALUES ('$BASE_BRANCH');\
-      INSERT INTO branches (branch_name) VALUES ('$FEATURE_BRANCH');" | \
+echo "INSERT INTO branches (branch_id, branch_name) VALUES (1, '$BASE_BRANCH');\
+      INSERT INTO branches (branch_id, branch_name) VALUES (2, '$FEATURE_BRANCH');" | \
 mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME"
 
 fetch_porcelain() {
@@ -267,7 +274,7 @@ fetch_porcelain() {
                 ((line_nr++))
                 
                 # Escape filename and handle NULL values
-                local escaped_filename=$($current_filename)
+                local escaped_filename="$current_filename"
                 local author_name_hex=$(to_hex "$current_author_name")
                 local author_email_hex=$(to_hex "$current_author_email")
                 local committer_name_hex=$(to_hex "$current_committer_name")
@@ -345,7 +352,6 @@ cd "$REPO_PATH" || { echo "Error: Failed to navigate to repository directory." >
 
 # Fetch commit history and switch to branch
 git switch -f "$BASE_BRANCH" || { echo "Error: Failed to switch to branch '$BASE_BRANCH'." >&2; exit 1; }
-all_files=$(git ls-files)
 
 # Compare file differences between two branches and categorize them
 # Usage: compare_branch_files <base_branch> <feature_branch>
@@ -359,21 +365,27 @@ compare_branch_files() {
     local BASE_BRANCH=$1
     local FEATURE_BRANCH=$2
     
-    # Get all changed files between branches
-    local all_changed_files=$(git diff --name-only "$BASE_BRANCH" "$FEATURE_BRANCH")
+    # Read include directories from config (if set)
+    local include_dirs=()
+    if [ -n "${INCLUDE_DIRS}" ]; then
+        include_dirs=($INCLUDE_DIRS)  # Convert to array
+    fi
+
+    # Get changed files only in specified directories
+    local all_changed_files=$(git diff --name-only "$BASE_BRANCH" "$FEATURE_BRANCH" -- "${include_dirs[@]}")
 
     # Declare associative arrays to track file presence
     local -A base_files feature_files
 
-    # Populate base branch files
+    # Populate base branch files (filtered by directories)
     while IFS= read -r file; do
         base_files["$file"]=1
-    done < <(git ls-tree -r --name-only "$BASE_BRANCH")
+    done < <(git ls-tree -r --name-only "$BASE_BRANCH" -- "${include_dirs[@]}")
 
-    # Populate feature branch files
+    # Populate feature branch files (filtered by directories)
     while IFS= read -r file; do
         feature_files["$file"]=1
-    done < <(git ls-tree -r --name-only "$FEATURE_BRANCH")
+    done < <(git ls-tree -r --name-only "$FEATURE_BRANCH" -- "${include_dirs[@]}")
 
     # Initialize result arrays
     local files_in_both=()
@@ -407,14 +419,14 @@ compare_branch_files() {
 
 # Example usage:
 compare_branch_files "$BASE_BRANCH" "$FEATURE_BRANCH"
-echo "Modified files: $files_in_both"
-echo "Base-only files: $files_in_base_only"
-echo "Feature-only files: $files_in_feature_only"
-echo "Modified + Base-only files: $files_in_both_and_base_only"
-echo "Modified + Feature-only files: $files_in_both_and_feature_only"
+#echo "Modified files: $files_in_both"
+#echo "Base-only files: $files_in_base_only"
+#echo "Feature-only files: $files_in_feature_only"
+#echo "Modified + Base-only files: $files_in_both_and_base_only"
+#echo "Modified + Feature-only files: $files_in_both_and_feature_only"
 
 
-NUM_THREADS=128
+NUM_THREADS=1
 count_file_nr=0
 
 #mkdir -p  "$ORIGINAL_DIR/out_base"
@@ -432,17 +444,22 @@ increment_counter() {
     ) 200>"counter.lock"  # Associate FD 200 with the lock file
 }
 
-export -f fetch_porcelain increment_counter fetch_unactive_commits
+export -f fetch_porcelain increment_counter
 export DB_HOST DB_USER DB_PASS DB_NAME ORIGINAL_DIR BASE_BRANCH FEATURE_BRANCH
 
 
+mkdir -p  "$ORIGINAL_DIR/out_base"
+echo "0" > "$ORIGINAL_DIR/out_base/counter.txt"
+touch "$ORIGINAL_DIR/out_base/counter.lock"
+
 #Use xargs to run fetch_porcelain in parallel
-#printf "%s\n" "${files_in_both[@]}" | awk '!seen[$0]++' | xargs -n 1 -P $NUM_THREADS -I {} bash -c '
-#    filename={}
-#    count_file_nr=$(increment_counter "$ORIGINAL_DIR/out_base")
-#    echo "Processing $filename (count: $count_file_nr)"
-#    fetch_porcelain "$BASE_BRANCH" "$filename" "$count_file_nr" "$DB_HOST" "$DB_USER" "$DB_PASS" "$DB_NAME" "$ORIGINAL_DIR/out_base"
-#'
+
+printf "%s\n" "${files_in_both[@]}" | awk '!seen[$0]++' | xargs -P "$NUM_THREADS" -I {} bash -c '
+    filename={}
+    pwd
+    count_file_nr=$(increment_counter "$ORIGINAL_DIR/out_base")
+    fetch_porcelain "$BASE_BRANCH" "$filename" "$count_file_nr" "$DB_HOST" "$DB_USER" "$DB_PASS" "$DB_NAME" "$ORIGINAL_DIR/out_base"
+'
 
 
 #mkdir -p  "$ORIGINAL_DIR/out_feature_b"
